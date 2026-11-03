@@ -17,11 +17,14 @@ import {
   FileText,
   HelpCircle,
   ChevronUp,
+  Wallet,
 } from "lucide-react";
 import { Empty, EmptyHeader, EmptyMedia, EmptyTitle, EmptyDescription } from "@/components/ui/empty.tsx";
+import PayBillModal from "./PayBillModal.tsx";
 
 interface Props {
   sessionId: Id<"table_sessions">;
+  restaurantId?: Id<"restaurants">;
 }
 
 function CancelTimer({
@@ -199,9 +202,17 @@ function RequestServiceFAB({ sessionId }: { sessionId: Id<"table_sessions"> }) {
 }
 
 // ── Main OrdersView ──
-export default function OrdersView({ sessionId }: Props) {
+export default function OrdersView({ sessionId, restaurantId }: Props) {
+  const [showPayBill, setShowPayBill] = useState(false);
   const orders = useQuery(api.orders.getOrdersForSession, { sessionId });
   const billData = useQuery(api.payments.getBillForSession, { sessionId });
+
+  // Resolve restaurantId from session if not passed as prop
+  const session = useQuery(
+    api.sessions.getSessionById,
+    restaurantId ? "skip" : { sessionId }
+  );
+  const effectiveRestaurantId = restaurantId ?? session?.restaurantId;
 
   if (orders === undefined) {
     return (
@@ -401,7 +412,35 @@ export default function OrdersView({ sessionId }: Props) {
             Taxes and service charges are calculated according to restaurant policy.
             You can settle your bill directly with the service staff.
           </p>
+
+          {/* Pay Bill button */}
+          {billData.remaining > 0 && effectiveRestaurantId && (
+            <Button
+              onClick={() => setShowPayBill(true)}
+              className="w-full bg-orange-500 hover:bg-orange-600 text-white font-bold gap-2 shadow-md shadow-orange-500/20"
+              size="lg"
+            >
+              <Wallet className="size-4" />
+              Pay Bill · {formatINR(billData.remaining)}
+            </Button>
+          )}
+
+          {billData.remaining === 0 && (
+            <div className="rounded-xl bg-green-900/20 border border-green-500/30 p-3 text-center">
+              <p className="text-sm font-bold text-green-300">✅ Bill fully paid — thank you!</p>
+            </div>
+          )}
         </div>
+      )}
+
+      {/* Pay Bill Modal */}
+      {effectiveRestaurantId && (
+        <PayBillModal
+          open={showPayBill}
+          onClose={() => setShowPayBill(false)}
+          sessionId={sessionId}
+          restaurantId={effectiveRestaurantId}
+        />
       )}
 
       {/* Floating Request Service FAB */}

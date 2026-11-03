@@ -47,6 +47,41 @@ export function orderStatusColor(status: string): string {
   return map[status] ?? "bg-gray-100 text-gray-700";
 }
 
+/**
+ * Formats table number and customer names for management views.
+ * Examples:
+ * - "Table 1 — Manjunath Gowda" (1 guest with name)
+ * - "Table 1 — Manjunath Gowda (+2 guests)" (multi-guest session)
+ * - "Table 1 — Guest" (no name recorded)
+ */
+export function formatTableCustomerLabel(
+  tableNumber: number | string | undefined | null,
+  customerNames?: string[] | null,
+  peopleCount?: number
+): {
+  headline: string;
+  subtext: string;
+} {
+  const tableDisplay = tableNumber !== undefined && tableNumber !== null ? `Table ${tableNumber}` : "Table ?";
+  const names = (customerNames ?? []).filter((n) => typeof n === "string" && n.trim().length > 0);
+  const primaryName = names[0]?.trim() || "Guest";
+
+  let headline = `${tableDisplay} — ${primaryName}`;
+  if (names.length > 1) {
+    headline += ` (+${names.length - 1} ${names.length === 2 ? "guest" : "guests"})`;
+  } else if ((peopleCount ?? 1) > 1 && primaryName !== "Guest") {
+    const additional = (peopleCount ?? 1) - 1;
+    headline += ` (+${additional} ${additional === 1 ? "guest" : "guests"})`;
+  }
+
+  const guestText = `${peopleCount ?? 1} ${peopleCount === 1 ? "Guest" : "Guests"}`;
+
+  return {
+    headline,
+    subtext: guestText,
+  };
+}
+
 /** Get request type label */
 export function requestTypeLabel(type: string): string {
   const map: Record<string, string> = {
@@ -55,6 +90,43 @@ export function requestTypeLabel(type: string): string {
     cutlery: "Cutlery",
     assistance: "Assistance",
     bill: "Request Bill",
+    payment_verification: "Payment Verification",
   };
   return map[type] ?? type;
+}
+
+/**
+ * Extracts a safe, informative user-facing message from any error
+ * (ConvexError, fetch error, standard Error, or string).
+ */
+export function getSafeErrorMessage(err: unknown, fallback: string): string {
+  if (!err) return fallback;
+
+  const anyErr = err as { data?: unknown; message?: string };
+  if (anyErr?.data) {
+    if (typeof anyErr.data === "string" && anyErr.data.trim()) return anyErr.data;
+    if (
+      typeof anyErr.data === "object" &&
+      anyErr.data !== null &&
+      "message" in anyErr.data &&
+      typeof (anyErr.data as { message?: unknown }).message === "string"
+    ) {
+      return (anyErr.data as { message: string }).message;
+    }
+  }
+
+  if (typeof anyErr?.message === "string" && anyErr.message.trim()) {
+    try {
+      const match = anyErr.message.match(/ConvexError\s*:\s*(\{.*\})/);
+      if (match) {
+        const parsed = JSON.parse(match[1]);
+        if (typeof parsed?.message === "string") return parsed.message;
+      }
+    } catch {
+      // ignore JSON parse failure
+    }
+    return anyErr.message;
+  }
+
+  return fallback;
 }

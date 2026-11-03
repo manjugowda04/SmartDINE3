@@ -5,16 +5,22 @@ import { Button } from "@/components/ui/button.tsx";
 import { formatINR } from "@/lib/restaurant.ts";
 import { toast } from "sonner";
 import { ShoppingCart, Trash2, Plus, Minus, ArrowRight, UtensilsCrossed } from "lucide-react";
-import { calculateBillCharges } from "@/convex/billingCalculations.js";
 
 interface Props {
   sessionId: Id<"table_sessions">;
   restaurantId?: Id<"restaurants">;
   onOpenCart: () => void;
+  onCheckout?: () => void;
   className?: string;
 }
 
-export function CartSidebar({ sessionId, restaurantId, onOpenCart, className = "" }: Props) {
+export function CartSidebar({
+  sessionId,
+  restaurantId,
+  onOpenCart,
+  onCheckout,
+  className = "",
+}: Props) {
   const cart = useQuery(api.cart.getCart, { sessionId });
   const restaurant = useQuery(
     api.restaurants.getRestaurantPublicInfo,
@@ -27,15 +33,6 @@ export function CartSidebar({ sessionId, restaurantId, onOpenCart, className = "
 
   const cartItems = cart?.items ?? [];
   const itemCount = cartItems.reduce((sum, item) => sum + item.quantity, 0);
-
-  // Compute breakdown using real restaurant tax and service charge settings
-  const breakdown = calculateBillCharges(cart?.total ?? 0, {
-    gstEnabled: restaurant?.gstEnabled,
-    gstPercentage: restaurant?.gstPercentage,
-    serviceChargeEnabled: restaurant?.serviceChargeEnabled,
-    serviceChargePercentage: restaurant?.serviceChargePercentage,
-    serviceChargeBasis: restaurant?.serviceChargeBasis,
-  });
 
   const handleClear = async () => {
     try {
@@ -180,44 +177,19 @@ export function CartSidebar({ sessionId, restaurantId, onOpenCart, className = "
       {/* Bill Breakdown Summary */}
       {cartItems.length > 0 && (
         <div className="border-t border-[#27272b] pt-3 space-y-2 text-xs">
-          <div className="flex justify-between text-zinc-400">
-            <span>Food Subtotal</span>
-            <span className="font-medium text-white">{formatINR(breakdown.subtotal)}</span>
-          </div>
-
-          {breakdown.serviceChargeEnabled && breakdown.serviceChargeAmount > 0 && (
-            <div className="flex justify-between text-zinc-400">
-              <span>
-                Service Charge ({breakdown.serviceChargePercentage}%)
-                <span className="text-[10px] block opacity-70">
-                  {breakdown.serviceChargeBasis === "subtotal_with_gst"
-                    ? "on subtotal + GST"
-                    : "on food subtotal"}
-                </span>
-              </span>
-              <span className="font-medium text-orange-400">
-                +{formatINR(breakdown.serviceChargeAmount)}
-              </span>
-            </div>
-          )}
-
-          {breakdown.gstEnabled && breakdown.gstAmount > 0 && (
-            <div className="flex justify-between text-zinc-400">
-              <span>GST ({breakdown.gstPercentage}%)</span>
-              <span className="font-medium text-orange-400">+{formatINR(breakdown.gstAmount)}</span>
-            </div>
-          )}
-
-          <div className="flex justify-between border-t border-[#27272b] pt-2 text-sm font-bold text-white">
-            <span>Total Payable</span>
-            <span className="text-orange-500 text-base">{formatINR(breakdown.totalAmount)}</span>
+          <div className="flex justify-between items-baseline text-sm font-bold text-white">
+            <span className="text-zinc-400 font-medium text-xs">Food Subtotal</span>
+            <span className="text-orange-400 font-mono text-base">{formatINR(cart?.total ?? 0)}</span>
           </div>
 
           <Button
-            onClick={onOpenCart}
-            className="w-full bg-orange-500 hover:bg-orange-600 text-white font-bold h-11 text-sm rounded-xl shadow-lg shadow-orange-500/20 active:scale-95 transition-transform flex items-center justify-center gap-2 mt-2"
+            onClick={onCheckout ?? onOpenCart}
+            disabled={cartItems.length === 0}
+            className="w-full bg-orange-500 hover:bg-orange-600 disabled:opacity-50 text-white font-bold h-11 text-sm rounded-xl shadow-lg shadow-orange-500/20 active:scale-95 transition-transform flex items-center justify-center gap-2 mt-2 cursor-pointer"
           >
-            <span>View Cart & Checkout</span>
+            <span>
+              Checkout ({itemCount} {itemCount === 1 ? "item" : "items"}) · {formatINR(cart?.total ?? 0)}
+            </span>
             <ArrowRight className="size-4" />
           </Button>
         </div>

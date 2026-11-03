@@ -208,4 +208,145 @@ describe("Customer Name Entry & Request Service", () => {
     const session = await t.run(async (ctx) => ctx.db.get("table_sessions", sid));
     expect(session?.customerNames).toContain("John");
   });
+
+  it("11. completeAllPendingRequests: completes all pending requests for current restaurant only", async () => {
+    const t = convexTest(schema, modules);
+    const { sid, rid, tid } = await setupTableAndSession(t);
+
+    // Create staff user in rid
+    const staffId = await t.run(async (ctx) => {
+      const u = await ctx.db.insert("users", {
+        name: "Staff Member",
+        email: "staff@bistro.com",
+        role: "staff",
+        restaurantId: rid,
+        isActive: true,
+      });
+      return u;
+    });
+
+    // Create another restaurant
+    const otherRid = await t.run(async (ctx) => {
+      return await ctx.db.insert("restaurants", {
+        name: "Other Restaurant",
+        isActive: true,
+        createdAt: Date.now(),
+      });
+    });
+
+    // Insert 2 pending requests in restaurant A
+    const req1 = await t.run(async (ctx) => {
+      return await ctx.db.insert("waiter_requests", {
+        sessionId: sid,
+        tableId: tid,
+        restaurantId: rid,
+        requestType: "water",
+        status: "pending",
+        createdAt: new Date().toISOString(),
+        updatedAt: new Date().toISOString(),
+      });
+    });
+    const req2 = await t.run(async (ctx) => {
+      return await ctx.db.insert("waiter_requests", {
+        sessionId: sid,
+        tableId: tid,
+        restaurantId: rid,
+        requestType: "cutlery",
+        status: "pending",
+        createdAt: new Date().toISOString(),
+        updatedAt: new Date().toISOString(),
+      });
+    });
+
+    // Insert 1 already completed request in restaurant A
+    const reqCompleted = await t.run(async (ctx) => {
+      return await ctx.db.insert("waiter_requests", {
+        sessionId: sid,
+        tableId: tid,
+        restaurantId: rid,
+        requestType: "waiter",
+        status: "completed",
+        createdAt: new Date().toISOString(),
+        updatedAt: new Date().toISOString(),
+      });
+    });
+
+    // Insert 1 pending request in other restaurant B
+    const reqOther = await t.run(async (ctx) => {
+      const otherTable = await ctx.db.insert("restaurant_tables", {
+        tableNumber: 1,
+        name: "Table 1",
+        token: "tok-other-1",
+        status: "available",
+        isActive: true,
+        restaurantId: otherRid,
+      });
+      const otherSession = await ctx.db.insert("table_sessions", {
+        tableId: otherTable,
+        status: "active",
+        peopleCount: 1,
+        sessionNumber: "SES-9999",
+        startTime: new Date().toISOString(),
+        restaurantId: otherRid,
+      });
+      return await ctx.db.insert("waiter_requests", {
+        sessionId: otherSession,
+        tableId: otherTable,
+        restaurantId: otherRid,
+        requestType: "bill",
+        status: "pending",
+        createdAt: new Date().toISOString(),
+        updatedAt: new Date().toISOString(),
+      });
+    });
+
+    // Run completeAllPendingRequests as staff
+    const asStaff = t.withIdentity({ subject: staffId });
+    const res = await asStaff.mutation(api.requests.completeAllPendingRequests, {});
+    expect(res.count).toBe(2);
+
+    // Verify req1 and req2 are completed
+    const r1 = await t.run(async (ctx) => ctx.db.get("waiter_requests", req1));
+    const r2 = await t.run(async (ctx) => ctx.db.get("waiter_requests", req2));
+    expect(r1?.status).toBe("completed");
+    expect(r1?.completedBy).toBe(staffId);
+    expect(r2?.status).toBe("completed");
+
+    // Verify other restaurant request is untouched
+    const rOther = await t.run(async (ctx) => ctx.db.get("waiter_requests", reqOther));
+    expect(rOther?.status).toBe("pending");
+  });
+
+  it("12. closeSession: blocks when payment_verification request is pending", async () => {
+    const t = convexTest(schema, modules);
+    const { sid, rid, tid } = await setupTableAndSession(t);
+
+    const managerId = await t.run(async (ctx) => {
+      return await ctx.db.insert("users", {
+        name: "Manager Alice",
+        email: "alice@bistro.com",
+        role: "manager",
+        restaurantId: rid,
+        isActive: true,
+      });
+    });
+
+    // Add pending payment_verification request
+    await t.run(async (ctx) => {
+      await ctx.db.insert("waiter_requests", {
+        sessionId: sid,
+        tableId: tid,
+        restaurantId: rid,
+        requestType: "payment_verification",
+        status: "pending",
+        createdAt: new Date().toISOString(),
+        updatedAt: new Date().toISOString(),
+      });
+    });
+
+    const asManager = t.withIdentity({ subject: managerId });
+    await expect(asManager.mutation(api.sessions.closeSession, { sessionId: sid })).rejects.toThrow(
+      /payment verification requests are pending/i
+    );
+  });
 });

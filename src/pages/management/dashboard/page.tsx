@@ -25,6 +25,7 @@ import { Input } from "@/components/ui/input.tsx";
 import { toast } from "sonner";
 import { ConvexError } from "convex/values";
 import { TaxAndChargesSection } from "./_components/TaxAndChargesSection.tsx";
+import { PaymentSettingsSection } from "./_components/PaymentSettingsSection.tsx";
 import type { Id } from "@/convex/_generated/dataModel.d.ts";
 
 function StatCard({
@@ -289,6 +290,9 @@ export default function DashboardPage() {
 
       {/* Tax & Service Charges Configuration for Owners */}
       <TaxAndChargesSection />
+
+      {/* UPI Payment Settings */}
+      <PaymentSettingsSection />
 
       {/* Today stats */}
       <div>

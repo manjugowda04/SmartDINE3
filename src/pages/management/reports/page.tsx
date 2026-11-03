@@ -290,7 +290,7 @@ export default function ReportsPage() {
                     <tr>
                       <th className="p-2.5 font-semibold">Order #</th>
                       <th className="p-2.5 font-semibold">Table</th>
-                      <th className="p-2.5 font-semibold">Customer Phone</th>
+                      <th className="p-2.5 font-semibold">Customer</th>
                       <th className="p-2.5 font-semibold">Status</th>
                       <th className="p-2.5 font-semibold text-right">Amount</th>
                       <th className="p-2.5 font-semibold text-right">Time</th>
@@ -301,8 +301,11 @@ export default function ReportsPage() {
                       <tr key={order._id} className="hover:bg-muted/20">
                         <td className="p-2.5 font-mono text-[11px] font-medium">{order.orderNumber}</td>
                         <td className="p-2.5">Table {order.table?.tableNumber ?? "?"}</td>
-                        <td className="p-2.5 font-mono text-[11px] text-muted-foreground">
-                          {order.customerPhone ?? "—"}
+                        <td className="p-2.5 text-[11px]">
+                          <span className="font-medium text-foreground">{order.customerName || "Guest"}</span>
+                          {order.customerPhone && (
+                            <span className="block font-mono text-[10px] text-muted-foreground">{order.customerPhone}</span>
+                          )}
                         </td>
                         <td className="p-2.5">
                           <span

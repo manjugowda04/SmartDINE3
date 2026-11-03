@@ -22,6 +22,10 @@ export default defineSchema({
     serviceChargeBasis: v.optional(
       v.union(v.literal("subtotal"), v.literal("subtotal_with_gst"))
     ),
+    // UPI & Payment Settings
+    upiId: v.optional(v.string()),
+    upiQrStorageId: v.optional(v.id("_storage")),
+    upiQrUrl: v.optional(v.string()),
   }),
 
   // ─── Users ──────────────────────────────────────────────────────────────────
@@ -303,7 +307,8 @@ export default defineSchema({
       v.literal("water"),
       v.literal("cutlery"),
       v.literal("assistance"),
-      v.literal("bill")
+      v.literal("bill"),
+      v.literal("payment_verification")
     ),
     status: v.union(
       v.literal("pending"),

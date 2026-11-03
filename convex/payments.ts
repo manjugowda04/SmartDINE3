@@ -237,3 +237,193 @@ export const requestBill = mutation({
     await ctx.db.patch("restaurant_tables", session.tableId, { status: "bill_pending" });
   },
 });
+
+export const requestPaymentVerification = mutation({
+  args: { sessionId: v.id("table_sessions") },
+  handler: async (ctx, args) => {
+    const session = await ctx.db.get("table_sessions", args.sessionId);
+    if (!session || session.status !== "active") {
+      throw new ConvexError({ code: "BAD_REQUEST", message: "Session is not active" });
+    }
+    const table = await ctx.db.get("restaurant_tables", session.tableId);
+    if (!table) throw new ConvexError({ code: "NOT_FOUND", message: "Table not found" });
+
+    const bill = await ctx.db
+      .query("bills")
+      .withIndex("by_session", (q) => q.eq("sessionId", args.sessionId))
+      .first();
+
+    if (!bill || bill.status === "paid" || (bill.totalAmount - bill.paidAmount) <= 0) {
+      throw new ConvexError({ code: "BAD_REQUEST", message: "Bill has already been settled" });
+    }
+
+    // Deduplication: if an open payment_verification request already exists, do not duplicate
+    const existing = await ctx.db
+      .query("waiter_requests")
+      .withIndex("by_session", (q) => q.eq("sessionId", args.sessionId))
+      .collect();
+
+    const alreadyPending = existing.some(
+      (r) =>
+        r.requestType === "payment_verification" &&
+        (r.status === "pending" || r.status === "in_progress")
+    );
+    if (alreadyPending) return;
+
+    const now = new Date().toISOString();
+    await ctx.db.insert("waiter_requests", {
+      sessionId: args.sessionId,
+      tableId: session.tableId,
+      requestType: "payment_verification",
+      status: "pending",
+      createdAt: now,
+      updatedAt: now,
+      restaurantId: session.restaurantId,
+    });
+
+    await ctx.db.patch("restaurant_tables", session.tableId, { status: "bill_pending" });
+  },
+});
+
+export const payFullAndCloseSession = mutation({
+  args: {
+    sessionId: v.id("table_sessions"),
+    method: v.union(v.literal("upi"), v.literal("card"), v.literal("cash")),
+  },
+  handler: async (ctx, args) => {
+    const user = await requireManagerOrOwner(ctx);
+    const restaurantId = await getAuthorizedRestaurantId(ctx, user);
+
+    const session = await ctx.db.get("table_sessions", args.sessionId);
+    if (!session || session.status !== "active") {
+      throw new ConvexError({ code: "BAD_REQUEST", message: "Session is not active" });
+    }
+
+    if (session.restaurantId && session.restaurantId !== restaurantId) {
+      throw new ConvexError({
+        code: "FORBIDDEN",
+        message: "You cannot close a session from another restaurant.",
+      });
+    }
+
+    const table = await ctx.db.get("restaurant_tables", session.tableId);
+    if (!table) throw new ConvexError({ code: "NOT_FOUND", message: "Table not found." });
+
+    const bill = await ctx.db
+      .query("bills")
+      .withIndex("by_session", (q) => q.eq("sessionId", args.sessionId))
+      .first();
+    if (!bill) throw new ConvexError({ code: "NOT_FOUND", message: "Bill not found." });
+
+    // 1. Verify no unserved active orders exist
+    const sessionOrders = await ctx.db
+      .query("orders")
+      .withIndex("by_session", (q) => q.eq("sessionId", args.sessionId))
+      .collect();
+    const hasUnfulfilledOrders = sessionOrders.some((o) =>
+      ["placed", "accepted", "preparing"].includes(o.status)
+    );
+    if (hasUnfulfilledOrders) {
+      throw new ConvexError({
+        code: "BAD_REQUEST",
+        message:
+          "Cannot close session while orders are still being prepared or waiting to be served.",
+      });
+    }
+
+    // 2. Verify no unverified payment requests exist
+    const sessionRequests = await ctx.db
+      .query("waiter_requests")
+      .withIndex("by_session", (q) => q.eq("sessionId", args.sessionId))
+      .collect();
+    const hasUnverifiedRequests = sessionRequests.some(
+      (r) =>
+        r.requestType === "payment_verification" &&
+        (r.status === "pending" || r.status === "in_progress")
+    );
+    if (hasUnverifiedRequests) {
+      throw new ConvexError({
+        code: "BAD_REQUEST",
+        message: "Cannot close session while payment verification requests are pending.",
+      });
+    }
+
+    // 3. Verify no pending payments exist
+    const pendingPayments = await ctx.db
+      .query("payments")
+      .withIndex("by_session", (q) => q.eq("sessionId", args.sessionId))
+      .collect();
+    const hasPending = pendingPayments.some((p) => p.status === "pending");
+    if (hasPending) {
+      throw new ConvexError({
+        code: "BAD_REQUEST",
+        message: "There are pending payments — please wait for them to complete.",
+      });
+    }
+
+    // 4. Exact remaining balance
+    const remaining = bill.totalAmount - bill.paidAmount;
+    if (remaining < 0) {
+      throw new ConvexError({ code: "BAD_REQUEST", message: "Invalid negative bill balance." });
+    }
+
+    const now = new Date().toISOString();
+
+    // 5. Record final payment if balance remains
+    if (remaining > 0) {
+      await ctx.db.insert("payments", {
+        sessionId: args.sessionId,
+        billId: bill._id,
+        amount: remaining,
+        method: args.method,
+        status: "paid",
+        createdAt: now,
+        completedAt: now,
+        recordedBy: user._id,
+        restaurantId,
+      });
+
+      await ctx.db.patch("bills", bill._id, {
+        paidAmount: bill.totalAmount,
+        status: "paid",
+        completedAt: now,
+        completedBy: user._id,
+      });
+    } else {
+      await ctx.db.patch("bills", bill._id, {
+        status: "paid",
+        completedAt: now,
+        completedBy: user._id,
+      });
+    }
+
+    // 6. Close session
+    await ctx.db.patch("table_sessions", args.sessionId, {
+      status: "closed",
+      endTime: now,
+      closedBy: user._id,
+    });
+
+    // 7. Mark table available
+    await ctx.db.patch("restaurant_tables", session.tableId, { status: "available" });
+
+    // 8. Audit log
+    await ctx.db.insert("audit_logs", {
+      userId: user._id,
+      action: "pay_full_and_close_session",
+      resourceType: "table_sessions",
+      resourceId: args.sessionId,
+      details: `Session ${session.sessionNumber} paid in full (₹${(remaining / 100).toFixed(2)} via ${args.method}) and closed`,
+      createdAt: now,
+      restaurantId,
+    });
+
+    return {
+      success: true,
+      amount: remaining,
+      method: args.method,
+      sessionNumber: session.sessionNumber,
+      tableNumber: table.tableNumber,
+    };
+  },
+});

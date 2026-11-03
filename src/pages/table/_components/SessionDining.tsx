@@ -119,21 +119,26 @@ export default function SessionDining({
         {activeTab === "menu" && (
           <MenuView
             sessionId={sessionId}
+            tableNumber={tableNumber}
+            restaurantName={restaurantName}
             restaurantId={effectiveRestaurantId}
+            customerName={customerName}
             onOpenCart={() => setActiveTab("cart")}
+            onOrderPlaced={() => setActiveTab("orders")}
           />
         )}
         {activeTab === "cart" && (
           <CartView
             sessionId={sessionId}
             tableNumber={tableNumber}
+            restaurantName={restaurantName}
             restaurantId={effectiveRestaurantId}
             customerName={customerName}
             onOrderPlaced={() => setActiveTab("orders")}
           />
         )}
         {activeTab === "orders" && (
-          <OrdersView sessionId={sessionId} />
+          <OrdersView sessionId={sessionId} restaurantId={effectiveRestaurantId} />
         )}
       </main>
     </div>

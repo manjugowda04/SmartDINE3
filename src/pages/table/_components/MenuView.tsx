@@ -8,20 +8,34 @@ import { Search, ShoppingCart, ArrowRight, X, Utensils, Sparkles, Leaf } from "l
 import { formatINR } from "@/lib/restaurant.ts";
 import { MenuItemCard } from "./MenuItemCard.tsx";
 import { CartSidebar } from "./CartSidebar.tsx";
+import { CheckoutModal } from "./CheckoutModal.tsx";
 
 interface Props {
   sessionId: Id<"table_sessions">;
   restaurantId?: Id<"restaurants">;
+  tableNumber?: number;
+  restaurantName?: string;
+  customerName?: string;
   onOpenCart?: () => void;
+  onOrderPlaced?: () => void;
 }
 
-export default function MenuView({ sessionId, restaurantId, onOpenCart }: Props) {
+export default function MenuView({
+  sessionId,
+  restaurantId,
+  tableNumber = 1,
+  restaurantName,
+  customerName,
+  onOpenCart,
+  onOrderPlaced,
+}: Props) {
   const menu = useQuery(api.menu.getMenuWithCategories, restaurantId ? { restaurantId } : {});
   const cart = useQuery(api.cart.getCart, { sessionId });
 
   const [searchQuery, setSearchQuery] = useState("");
   const [selectedCategoryId, setSelectedCategoryId] = useState<string>("all");
   const [vegOnly, setVegOnly] = useState(false);
+  const [showCheckout, setShowCheckout] = useState(false);
 
   // Cart summary calculations
   const cartItems = cart?.items ?? [];
@@ -215,12 +229,13 @@ export default function MenuView({ sessionId, restaurantId, onOpenCart }: Props)
             sessionId={sessionId}
             restaurantId={restaurantId}
             onOpenCart={onOpenCart ?? (() => {})}
+            onCheckout={() => setShowCheckout(true)}
           />
         </div>
       </div>
 
       {/* Mobile Floating Cart Summary Bar */}
-      {cartCount > 0 && onOpenCart && (
+      {cartCount > 0 && (
         <div className="fixed bottom-4 left-4 right-4 z-40 lg:hidden">
           <div className="bg-[#18181c]/95 backdrop-blur-md border border-orange-500/40 rounded-2xl p-3 shadow-2xl flex items-center justify-between gap-3 text-white">
             <div className="flex items-center gap-3 pl-1">
@@ -232,7 +247,7 @@ export default function MenuView({ sessionId, restaurantId, onOpenCart }: Props)
               </div>
               <div>
                 <p className="text-[11px] text-zinc-400 uppercase tracking-wider font-semibold">
-                  {cartCount} {cartCount === 1 ? "item" : "items"} added
+                  {cartCount} {cartCount === 1 ? "item" : "items"}
                 </p>
                 <p className="text-base font-extrabold text-orange-400 leading-tight">
                   {formatINR(cartTotal)}
@@ -241,15 +256,36 @@ export default function MenuView({ sessionId, restaurantId, onOpenCart }: Props)
             </div>
 
             <Button
-              onClick={onOpenCart}
-              className="bg-orange-500 hover:bg-orange-600 text-white font-bold h-11 px-4 rounded-xl shadow-lg shadow-orange-500/25 flex items-center gap-2 active:scale-95 transition-transform"
+              onClick={() => setShowCheckout(true)}
+              disabled={cartCount === 0}
+              className="bg-orange-500 hover:bg-orange-600 disabled:opacity-50 text-white font-bold h-11 px-4 rounded-xl shadow-lg shadow-orange-500/25 flex items-center gap-2 active:scale-95 transition-transform cursor-pointer"
             >
-              <span className="text-xs sm:text-sm">View Cart & Checkout</span>
+              <span className="text-xs sm:text-sm">
+                Checkout ({cartCount}) · {formatINR(cartTotal)}
+              </span>
               <ArrowRight className="size-4" />
             </Button>
           </div>
         </div>
       )}
+
+      {/* Order Confirmation Modal */}
+      <CheckoutModal
+        open={showCheckout}
+        onClose={() => setShowCheckout(false)}
+        sessionId={sessionId}
+        tableNumber={tableNumber}
+        restaurantName={restaurantName}
+        restaurantId={restaurantId}
+        customerName={customerName}
+        onSuccess={() => {
+          if (onOrderPlaced) {
+            onOrderPlaced();
+          } else if (onOpenCart) {
+            onOpenCart();
+          }
+        }}
+      />
     </div>
   );
 }

@@ -59,7 +59,8 @@ export const createWaiterRequest = mutation({
       v.literal("water"),
       v.literal("cutlery"),
       v.literal("assistance"),
-      v.literal("bill")
+      v.literal("bill"),
+      v.literal("payment_verification")
     ),
   },
   returns: v.id("waiter_requests"),
@@ -202,5 +203,39 @@ export const updateRequestStatus = mutation({
     });
 
     return null;
+  },
+});
+
+export const completeAllPendingRequests = mutation({
+  args: {},
+  returns: v.object({
+    count: v.number(),
+  }),
+  handler: async (ctx) => {
+    const user = await requireStaffOrAbove(ctx);
+    const restaurantId = await getAuthorizedRestaurantId(ctx, user);
+
+    // Query pending requests for this restaurant
+    const pendingRequests = await ctx.db
+      .query("waiter_requests")
+      .withIndex("by_status", (q) => q.eq("status", "pending"))
+      .collect();
+
+    const scopedPending = pendingRequests.filter(
+      (r) => r.restaurantId === restaurantId
+    );
+
+    const now = new Date().toISOString();
+    await Promise.all(
+      scopedPending.map((r) =>
+        ctx.db.patch("waiter_requests", r._id, {
+          status: "completed",
+          updatedAt: now,
+          completedBy: user._id,
+        })
+      )
+    );
+
+    return { count: scopedPending.length };
   },
 });

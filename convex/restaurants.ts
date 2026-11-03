@@ -1,7 +1,12 @@
 import { ConvexError, v } from "convex/values";
 import { mutation, query } from "./_generated/server.js";
 import { getAuthUserId } from "@convex-dev/auth/server";
-import { requireOwner, requireAuthenticatedUser } from "./authHelpers.js";
+import {
+  requireOwner,
+  requireManagerOrOwner,
+  requireAuthenticatedUser,
+  getAuthorizedRestaurantId,
+} from "./authHelpers.js";
 import { validateAndRedeemMasterCode } from "./masterCode.js";
 
 // ─── Queries ───────────────────────────────────────────────────────
@@ -43,9 +48,20 @@ export const getCurrentRestaurant = query({
       }
     }
 
+    let upiQrUrl = restaurant.upiQrUrl;
+    if (restaurant.upiQrStorageId) {
+      const qrStorageUrl = await ctx.storage.getUrl(
+        restaurant.upiQrStorageId
+      );
+      if (qrStorageUrl) {
+        upiQrUrl = qrStorageUrl;
+      }
+    }
+
     return {
       ...restaurant,
       logoUrl,
+      upiQrUrl,
     };
   },
 });
@@ -79,12 +95,24 @@ export const getRestaurantPublicInfo = query({
       }
     }
 
+    let upiQrUrl = restaurant.upiQrUrl;
+    if (restaurant.upiQrStorageId) {
+      const qrStorageUrl = await ctx.storage.getUrl(
+        restaurant.upiQrStorageId
+      );
+      if (qrStorageUrl) {
+        upiQrUrl = qrStorageUrl;
+      }
+    }
+
     return {
       _id: restaurant._id,
       name: restaurant.name,
       address: restaurant.address,
       contactNumber: restaurant.contactNumber,
       logoUrl,
+      upiId: restaurant.upiId,
+      upiQrUrl,
       gstEnabled: !!restaurant.gstEnabled,
       gstPercentage: restaurant.gstPercentage ?? 0,
       serviceChargeEnabled: !!restaurant.serviceChargeEnabled,
@@ -304,14 +332,115 @@ export const updateRestaurantProfile = mutation({
 });
 
 /**
- * Generates an upload URL for the restaurant logo. Owner only.
+ * Generates an upload URL for restaurant branding/QR images. Owner and Manager.
  */
 export const generateUploadUrl = mutation({
   args: {},
 
   handler: async (ctx) => {
-    await requireOwner(ctx);
+    await requireManagerOrOwner(ctx);
     return await ctx.storage.generateUploadUrl();
+  },
+});
+
+/**
+ * Updates restaurant UPI ID and payment QR settings. Owner and Manager only.
+ */
+export const updatePaymentSettings = mutation({
+  args: {
+    upiId: v.optional(v.string()),
+    upiQrStorageId: v.optional(v.id("_storage")),
+    removeQrImage: v.optional(v.boolean()),
+  },
+
+  handler: async (ctx, args) => {
+    const user = await requireManagerOrOwner(ctx);
+    const restaurantId = await getAuthorizedRestaurantId(ctx, user);
+
+    const current = await ctx.db.get("restaurants", restaurantId);
+    if (!current) {
+      throw new ConvexError({
+        code: "NOT_FOUND",
+        message: "Restaurant not found.",
+      });
+    }
+
+    const updates: Record<string, unknown> = {};
+
+    if (args.upiId !== undefined) {
+      const trimmedUpi = args.upiId.trim();
+      if (trimmedUpi.length > 0) {
+        // Standard UPI ID validation: handle@bank (e.g. 6787677877@ybl, restaurant@okhdfcbank)
+        const upiRegex = /^[a-zA-Z0-9.\-_]{2,256}@[a-zA-Z0-9.\-_]{2,64}$/;
+        if (!upiRegex.test(trimmedUpi)) {
+          throw new ConvexError({
+            code: "BAD_REQUEST",
+            message: "Invalid UPI ID format. Expected format: handle@bank (e.g. restaurant@okhdfcbank).",
+          });
+        }
+        updates.upiId = trimmedUpi;
+      } else {
+        updates.upiId = undefined;
+      }
+    }
+
+    if (args.removeQrImage) {
+      if (current.upiQrStorageId) {
+        try {
+          await ctx.storage.delete(current.upiQrStorageId);
+        } catch {
+          // ignore if already deleted
+        }
+      }
+      updates.upiQrStorageId = undefined;
+      updates.upiQrUrl = undefined;
+    } else if (args.upiQrStorageId !== undefined) {
+      // Validate that the storage ID is valid and accessible before updating
+      const url = await ctx.storage.getUrl(args.upiQrStorageId);
+      if (!url) {
+        throw new ConvexError({
+          code: "BAD_REQUEST",
+          message: "Uploaded QR image not found in storage.",
+        });
+      }
+
+      // Clean up previous QR storage if being replaced
+      if (current.upiQrStorageId && current.upiQrStorageId !== args.upiQrStorageId) {
+        try {
+          await ctx.storage.delete(current.upiQrStorageId);
+        } catch {
+          // ignore
+        }
+      }
+      updates.upiQrStorageId = args.upiQrStorageId;
+      updates.upiQrUrl = url;
+    }
+
+    await ctx.db.patch("restaurants", restaurantId, updates);
+
+    try {
+      await ctx.db.insert("audit_logs", {
+        userId: user._id,
+        action: "update_payment_settings",
+        resourceType: "restaurants",
+        resourceId: restaurantId,
+        details: "Updated restaurant UPI ID and payment QR configuration",
+        createdAt: new Date().toISOString(),
+        restaurantId,
+      });
+    } catch (auditErr) {
+      console.error("Failed to insert audit log for updatePaymentSettings:", auditErr);
+    }
+
+    return {
+      success: true,
+      upiId: updates.upiId !== undefined ? (updates.upiId as string | undefined) : current.upiId,
+      upiQrUrl: args.removeQrImage
+        ? undefined
+        : updates.upiQrUrl !== undefined
+        ? (updates.upiQrUrl as string | undefined)
+        : current.upiQrUrl,
+    };
   },
 });
 

@@ -389,6 +389,23 @@ export const closeSession = mutation({
       });
     }
 
+    // Check for unverified payment requests
+    const sessionRequests = await ctx.db
+      .query("waiter_requests")
+      .withIndex("by_session", (q) => q.eq("sessionId", args.sessionId))
+      .collect();
+    const hasUnverifiedRequests = sessionRequests.some(
+      (r) =>
+        r.requestType === "payment_verification" &&
+        (r.status === "pending" || r.status === "in_progress")
+    );
+    if (hasUnverifiedRequests) {
+      throw new ConvexError({
+        code: "BAD_REQUEST",
+        message: "Cannot close session while payment verification requests are pending.",
+      });
+    }
+
     const now = new Date().toISOString();
 
     // Close session atomically

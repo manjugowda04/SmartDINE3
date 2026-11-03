@@ -7,15 +7,20 @@ import { Skeleton } from "@/components/ui/skeleton.tsx";
 import { requestTypeLabel, timeAgo } from "@/lib/restaurant.ts";
 import { toast } from "sonner";
 import { ConvexError } from "convex/values";
-import { Bell, CheckCircle, Clock, ArrowRight, Star, MessageSquare } from "lucide-react";
+import { Bell, CheckCircle, Clock, ArrowRight, Star, MessageSquare, CheckCheck, AlertTriangle } from "lucide-react";
 import { Empty, EmptyHeader, EmptyMedia, EmptyTitle, EmptyDescription } from "@/components/ui/empty.tsx";
+import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter, DialogDescription } from "@/components/ui/dialog.tsx";
 
 export default function RequestsPage() {
   const [filter, setFilter] = useState<"pending" | "in_progress" | "completed" | "all">("pending");
   const [inboxTab, setInboxTab] = useState<"requests" | "feedback">("requests");
+  const [showAllDoneConfirm, setShowAllDoneConfirm] = useState(false);
+  const [completingAll, setCompletingAll] = useState(false);
+
   const allRequests = useQuery(api.requests.listWaiterRequests, {});
   const feedback = useQuery(api.requests.listCustomerFeedback, {});
   const updateStatus = useMutation(api.requests.updateRequestStatus);
+  const completeAllPending = useMutation(api.requests.completeAllPendingRequests);
 
   const filtered = allRequests
     ? filter === "all"
@@ -29,6 +34,25 @@ export default function RequestsPage() {
       toast.success(`Request marked as ${status.replace("_", " ")}`);
     } catch (e) {
       toast.error("Failed to update request");
+    }
+  };
+
+  const handleCompleteAll = async () => {
+    if (completingAll) return;
+    setCompletingAll(true);
+    try {
+      const res = await completeAllPending({});
+      toast.success(
+        res.count > 0
+          ? `All ${res.count} pending requests marked as completed!`
+          : "No pending requests to complete."
+      );
+      setShowAllDoneConfirm(false);
+    } catch (e) {
+      if (e instanceof ConvexError) toast.error(e.data.message);
+      else toast.error("Failed to complete pending requests");
+    } finally {
+      setCompletingAll(false);
     }
   };
 
@@ -118,21 +142,43 @@ export default function RequestsPage() {
         )
       ) : (
         <>
-      {/* Filters */}
-      <div className="flex gap-2">
-        {(["pending", "in_progress", "completed", "all"] as const).map((f) => (
-          <button
-            key={f}
-            onClick={() => setFilter(f)}
-            className={`px-3 py-1.5 rounded-lg text-sm font-medium transition-colors ${
-              filter === f
-                ? "bg-primary text-primary-foreground"
-                : "bg-secondary text-secondary-foreground hover:bg-secondary/80"
-            }`}
-          >
-            {f === "in_progress" ? "In Progress" : f.charAt(0).toUpperCase() + f.slice(1)}
-          </button>
-        ))}
+      {/* Filters and All Done button */}
+      <div className="flex items-center justify-between flex-wrap gap-2">
+        <div className="flex gap-2 flex-wrap">
+          {(["pending", "in_progress", "completed", "all"] as const).map((f) => (
+            <button
+              key={f}
+              onClick={() => setFilter(f)}
+              className={`px-3 py-1.5 rounded-lg text-sm font-medium transition-colors ${
+                filter === f
+                  ? "bg-primary text-primary-foreground shadow-sm"
+                  : "bg-secondary text-secondary-foreground hover:bg-secondary/80"
+              }`}
+            >
+              {f === "in_progress" ? "In Progress" : f.charAt(0).toUpperCase() + f.slice(1)}
+              {f === "pending" && pendingCount > 0 && (
+                <span className="ml-1.5 px-1.5 py-0.2 rounded-full text-[10px] font-mono bg-black/20">
+                  {pendingCount}
+                </span>
+              )}
+            </button>
+          ))}
+        </div>
+
+        {/* All Done Button */}
+        <Button
+          onClick={() => setShowAllDoneConfirm(true)}
+          disabled={pendingCount === 0 || completingAll}
+          className="bg-orange-500 hover:bg-orange-600 disabled:opacity-50 text-white font-bold text-xs h-9 px-3.5 rounded-xl shadow-md shadow-orange-500/20 flex items-center gap-1.5 cursor-pointer"
+        >
+          <CheckCheck className="size-4" />
+          <span>All Done</span>
+          {pendingCount > 0 && (
+            <span className="bg-white/20 text-white text-[10px] font-mono px-1.5 py-0.5 rounded-full">
+              {pendingCount}
+            </span>
+          )}
+        </Button>
       </div>
 
       {allRequests === undefined ? (
@@ -189,6 +235,43 @@ export default function RequestsPage() {
       )}
         </>
       )}
+
+      {/* Confirmation Dialog for All Done */}
+      <Dialog open={showAllDoneConfirm} onOpenChange={setShowAllDoneConfirm}>
+        <DialogContent className="bg-[#16161a] border-[#27272b] text-zinc-100 max-w-md">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2 text-white">
+              <CheckCheck className="size-5 text-orange-400" />
+              Complete All Pending Requests?
+            </DialogTitle>
+            <DialogDescription className="text-zinc-400 text-xs mt-1">
+              Are you sure you want to mark all pending requests as completed?
+            </DialogDescription>
+          </DialogHeader>
+
+          <p className="text-xs text-zinc-300">
+            This will mark {pendingCount} pending {pendingCount === 1 ? "request" : "requests"} as completed for your restaurant. Request history and records will be fully preserved.
+          </p>
+
+          <DialogFooter className="gap-2 sm:gap-0">
+            <Button
+              variant="secondary"
+              onClick={() => setShowAllDoneConfirm(false)}
+              disabled={completingAll}
+              className="bg-[#24242a] hover:bg-[#2e2e36] text-white border-none"
+            >
+              Cancel
+            </Button>
+            <Button
+              onClick={handleCompleteAll}
+              disabled={completingAll}
+              className="bg-orange-500 hover:bg-orange-600 text-white font-bold"
+            >
+              {completingAll ? "Completing..." : "Confirm All Done"}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }
